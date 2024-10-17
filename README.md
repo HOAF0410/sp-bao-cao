@@ -7,6 +7,9 @@ Các thành phần trong mạch:
 + hydrophone
 
 
+Tổng Quan Luồng Tín Hiệu:
+Hydrophone ➔ Bộ khuếch đại ➔ ESP32 ADC (qua I2S) ➔ Bộ nhớ SD/Truyền qua Web
+
 Nguyên lý hoạt động cơ bản:
   + đầu tiên nạp code cho mạch và đảm bảo kết nối đúng
   + ban đầu mạch ở trạng thái chờ
