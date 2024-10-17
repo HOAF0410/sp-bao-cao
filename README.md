@@ -17,7 +17,7 @@ Nguyên lý hoạt động cơ bản:
   + khi ấn nút ( chân D33 ) thì sẽ bắt đầu ghi âm 
   + tín hiệu từ cảm biến đi vào chân D34 của esp32 ( I2S )
   + tín hiệu được đưa vào thẻ sd để lưu trữ ( dạng .wav )
-  + truy cập vào IP của esp32 ( 198.162.4.1) sẽ hiển thị danh sách các file được ghi
+  + truy cập vào IP của esp32 ( 192.168.4.1) sẽ hiển thị danh sách các file được ghi
   + ấn vào file để tải đoạn ghi về thiết bị
 # XỬ LÝ NHIỄU TÍN HIỆU ĐẢM BẢO ÂM THANH CHÂN THỰC TỪ MÔI TRƯỜNG
   + Dùng Max4466 để khuyếch đại từ eps32 đảm bảo tín hiệu không quá bé ( lưu ý chỉnh chiết áp cho phù hợp ) 
