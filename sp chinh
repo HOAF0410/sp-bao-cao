@@ -1,0 +1,182 @@
+#include <WiFi.h>        // Thư viện hỗ trợ ESP32 tạo mạng WiFi hoặc kết nối vào mạng WiFi.
+#include <WebServer.h>   // Thư viện tạo web server giúp ESP32 xử lý các yêu cầu HTTP từ trình duyệt.
+#include <SD.h>          // Thư viện giúp ESP32 đọc và ghi dữ liệu trên thẻ SD.
+#include <vector>        // Thư viện C++ cho phép sử dụng vector để lưu danh sách tên tệp ghi âm.
+#include <cmath>         // Thư viện chuẩn C++ chứa các hàm toán học, như sqrt() để tính căn bậc hai.
+
+// Định nghĩa chân GPIO để kết nối các linh kiện
+#define BUTTON_PIN 33    // Chân GPIO nối với nút nhấn, điều khiển việc ghi âm.
+#define LED_PIN 2        // Chân GPIO nối với LED báo hiệu trạng thái ghi âm.
+#define SD_CS 5          // Chân CS của thẻ SD là GPIO 5.
+#define ADC_PIN 34       // Chân GPIO nhận tín hiệu từ cảm biến âm thanh MAX4466.
+
+const char* ssid = "vip1";           // Tên mạng WiFi mà ESP32 sẽ tạo.
+const char* password = "123456789";  // Mật khẩu của mạng WiFi do ESP32 tạo.
+
+// Tạo một web server trên cổng 80 để xử lý yêu cầu HTTP từ trình duyệt.
+WebServer server(80);
+
+// Biến để cấu hình trạng thái và lưu trữ thông tin ghi âm
+bool isRecording = false;              // Trạng thái ghi âm hiện tại.
+File wavFile;                          // Đối tượng file WAV để lưu dữ liệu âm thanh.
+String lastRecordedFile;               // Lưu tên tệp âm thanh cuối cùng đã ghi.
+std::vector<String> recordedFiles;     // Danh sách tên tệp âm thanh đã ghi.
+
+// Cấu hình âm thanh
+const int sampleRate = 44100;          // Tần số lấy mẫu (44100 Hz).
+const int bitsPerSample = 16;          // Độ sâu bit của âm thanh (16 bit).
+const int channels = 1;                // Số kênh âm thanh (1 kênh là mono).
+const int adcBufferSize = 512;         // Kích thước bộ đệm ADC cho dữ liệu âm thanh.
+
+void writeWAVHeader(File file, int sampleRate, int bitsPerSample, int channels, int dataSize) {
+    // Hàm tạo tiêu đề WAV, gồm các phần:
+    // "RIFF", kích thước file, "WAVE" là định dạng, "fmt " là phần định dạng.
+    file.write((const uint8_t*)"RIFF", 4);                      // Chunk ID
+    int fileSize = 36 + dataSize;                               // Kích thước file
+    file.write((byte*)&fileSize, 4);                            
+    file.write((const uint8_t*)"WAVE", 4);                      // Định dạng
+
+    file.write((const uint8_t*)"fmt ", 4);                      // Subchunk1 ID
+    int fmtChunkSize = 16;                                      // Kích thước subchunk
+    file.write((byte*)&fmtChunkSize, 4);                        
+    int16_t audioFormat = 1;                                    // PCM
+    int16_t numChannels = channels;                             // Số kênh
+    file.write((byte*)&audioFormat, 2);                         
+    file.write((byte*)&numChannels, 2);                         
+
+    file.write((byte*)&sampleRate, 4);                          // Tần số mẫu
+    int32_t byteRate = sampleRate * channels * bitsPerSample / 8;
+    file.write((byte*)&byteRate, 4);
+
+    int16_t blockAlign = channels * bitsPerSample / 8;
+    file.write((byte*)&blockAlign, 2);                          // Block Align
+    file.write((byte*)&bitsPerSample, 2);                       // Độ sâu bit
+
+    file.write((const uint8_t*)"data", 4);                      // Phần dữ liệu
+    file.write((byte*)&dataSize, 4);                            // Kích thước dữ liệu
+}
+
+void startRecording() {
+    // Hàm bắt đầu ghi âm, tạo tệp WAV và ghi tiêu đề vào file
+    lastRecordedFile = "/audio_" + String(millis()) + ".wav";   // Tên file với thời gian hiện tại.
+    wavFile = SD.open(lastRecordedFile.c_str(), FILE_WRITE);    // Mở file trên thẻ SD.
+    if (!wavFile) {
+        Serial.println("Failed to create file");
+        return;
+    }
+    writeWAVHeader(wavFile, sampleRate, bitsPerSample, channels, 0);  // Ghi tiêu đề WAV.
+    recordedFiles.push_back(lastRecordedFile);                 // Lưu tên file vào danh sách.
+    isRecording = true;                                        // Đặt trạng thái ghi âm là true.
+    digitalWrite(LED_PIN, HIGH);                               // Bật LED báo hiệu ghi âm.
+    Serial.println("Recording started");
+}
+
+void stopRecording() {
+    // Hàm kết thúc ghi âm và cập nhật kích thước file WAV
+    if (!isRecording) return;
+
+    isRecording = false;                                       // Đặt trạng thái ghi âm là false.
+    int dataSize = wavFile.size() - 44;                        // Lấy kích thước dữ liệu.
+    wavFile.seek(4);                                           // Cập nhật kích thước file.
+    int fileSize = 36 + dataSize;
+    wavFile.write((byte*)&fileSize, 4);
+
+    wavFile.seek(40);                                          // Cập nhật kích thước dữ liệu.
+    wavFile.write((byte*)&dataSize, 4);
+
+    wavFile.close();                                           // Đóng file.
+    digitalWrite(LED_PIN, LOW);                                // Tắt LED.
+    Serial.println("Recording stopped");
+}
+
+void displaySignalLevel(int16_t* buffer, size_t length) {
+    // Hàm hiển thị mức tín hiệu âm thanh
+    long sumSquares = 0;
+    for (int i = 0; i < length; i++) {
+        sumSquares += buffer[i] * buffer[i];                   // Tổng bình phương tín hiệu.
+    }
+    float rms = sqrt(sumSquares / length);                     // Giá trị hiệu dụng (rms) của tín hiệu.
+    int level = map(rms, 0, 32767, 0, 255);                    // Tỉ lệ mức tín hiệu cho LED.
+    analogWrite(LED_PIN, level);                               // Điều chỉnh LED theo mức tín hiệu.
+    Serial.print("Signal Level: ");
+    Serial.println(level);
+}
+
+void handleAudioList() {
+    // Hàm hiển thị danh sách tệp âm thanh qua HTTP
+    String html = "<html><body><h1>Recorded Files</h1><ul>";
+    for (const auto& fileName : recordedFiles) {
+        html += "<li><a href='/download?file=" + fileName + "'>" + fileName + "</a></li>";
+    }
+    html += "</ul></body></html>";
+    server.send(200, "text/html", html);                        // Gửi HTML về trình duyệt.
+}
+
+void handleAudioDownload() {
+    // Hàm tải xuống tệp âm thanh qua HTTP
+    String fileName = server.arg("file");
+    if (SD.exists(fileName)) {
+        File file = SD.open(fileName, FILE_READ);               // Mở file từ SD.
+        server.sendHeader("Content-Type", "application/octet-stream");
+        server.sendHeader("Content-Disposition", "attachment; filename=" + fileName);
+        server.streamFile(file, "application/octet-stream");    // Gửi dữ liệu tệp về trình duyệt.
+        file.close();
+    } else {
+        server.send(404, "text/plain", "No file found");        // Trả lỗi 404 nếu không tìm thấy tệp.
+    }
+}
+
+void setupWebServer() {
+    // Cấu hình web server và các URL handler
+    server.on("/", handleAudioList);                            // Xử lý URL gốc, hiển thị danh sách tệp.
+    server.on("/download", handleAudioDownload);                // Xử lý URL tải file.
+    server.begin();
+}
+
+void setup() {
+    // Thiết lập hệ thống và cấu hình các chân
+    Serial.begin(115200);                                       // Bắt đầu Serial monitor.
+
+    pinMode(BUTTON_PIN, INPUT_PULLUP);                          // Cấu hình nút nhấn.
+    pinMode(LED_PIN, OUTPUT);                                   // Cấu hình LED.
+    digitalWrite(LED_PIN, LOW);                                 // Tắt LED khi khởi tạo.
+
+    WiFi.softAP(ssid, password);                                // Tạo mạng WiFi.
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.softAPIP());
+
+    if (!SD.begin(SD_CS)) {                                     // Khởi tạo thẻ SD.
+        Serial.println("SD Card initialization failed");
+        return;
+    }
+
+    setupWebServer();                                           // Khởi tạo web server.
+    Serial.println("Setup completed");
+}
+
+void loop() {
+    // Vòng lặp chính, xử lý trạng thái nút nhấn và ghi âm
+    static bool buttonState = HIGH;
+    bool currentButtonState = digitalRead(BUTTON_PIN);
+
+    if (currentButtonState == LOW && buttonState == HIGH) {     // Nếu nhấn nút.
+        if (!isRecording) {
+            startRecording();                                   // Bắt đầu ghi âm nếu đang ngưng.
+        } else {
+            stopRecording();                                    // Dừng ghi âm nếu đang ghi.
+        }
+    }
+
+    buttonState = currentButtonState;
+
+    if (isRecording) {
+        int16_t adcBuffer[adcBufferSize];
+        for (int i = 0; i < adcBufferSize; i++) {
+            adcBuffer[i] = analogRead(ADC_PIN) - 2048;          // Đọc và chuyển đổi tín hiệu ADC.
+        }
+        wavFile.write((byte*)adcBuffer, sizeof(adcBuffer));     // Ghi dữ liệu âm thanh vào tệp.
+        displaySignalLevel(adcBuffer, adcBufferSize);           // Hiển thị mức tín hiệu.
+    }
+
+    server.handleClient();                                      // Xử lý yêu cầu HTTP từ trình duyệt.
+}
