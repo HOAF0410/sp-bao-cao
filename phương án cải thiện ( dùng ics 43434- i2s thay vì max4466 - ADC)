@@ -1,0 +1,109 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <SD.h>
+#include <SPI.h>
+#include <driver/i2s.h>
+
+#define I2S_WS 14          // Chân WS (Word Select) cho I2S
+#define I2S_SD 15          // Chân SD (Data) cho I2S
+#define I2S_SCK 13         // Chân SCK (Clock) cho I2S
+#define SD_CS_PIN 5        // Chân CS cho thẻ SD
+
+WebServer server(80);
+File audioFile;
+
+// Cấu hình I2S
+void i2s_init() {
+  i2s_config_t i2s_config = {
+      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+      .sample_rate = 44100,                       // Tần số lấy mẫu 44.1kHz
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+      .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+      .communication_format = I2S_COMM_FORMAT_I2S,
+      .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,   // Mức độ ưu tiên của ngắt
+      .dma_buf_count = 8,
+      .dma_buf_len = 1024,
+      .use_apll = false
+  };
+
+  i2s_pin_config_t pin_config = {
+      .bck_io_num = I2S_SCK,      // Clock
+      .ws_io_num = I2S_WS,        // Word Select
+      .data_out_num = I2S_PIN_NO_CHANGE,
+      .data_in_num = I2S_SD       // Data input
+  };
+
+  i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL); // Cài đặt driver I2S
+  i2s_set_pin(I2S_NUM_0, &pin_config);                 // Cấu hình chân I2S
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Khởi tạo SD card
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("Không thể khởi tạo thẻ SD!");
+    return;
+  }
+  Serial.println("Thẻ SD đã sẵn sàng.");
+
+  // Khởi tạo Wi-Fi
+  WiFi.begin("SSID", "PASSWORD"); // Tùy mật khẩu để kết nối tới
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi đã kết nối!");
+
+  // Khởi tạo web server
+  server.on("/", HTTP_GET, handleRoot);
+  server.begin();
+
+  // Khởi tạo file lưu dữ liệu âm thanh
+  audioFile = SD.open("/audio.wav", FILE_WRITE);
+  if (!audioFile) {
+    Serial.println("Không thể tạo file âm thanh!");
+    return;
+  }
+  writeWavHeader(audioFile, 44100);  // Ghi tiêu đề file WAV
+
+  // Khởi tạo I2S
+  i2s_init();
+  Serial.println("I2S và SD card đã khởi tạo xong, bắt đầu thu tín hiệu từ hydrophone.");
+}
+
+void loop() {
+  server.handleClient();                // Xử lý yêu cầu web server
+
+  // Đọc tín hiệu từ I2S
+  const int bufferSize = 1024;
+  int16_t buffer[bufferSize];
+  size_t bytesRead;
+  
+  i2s_read(I2S_NUM_0, &buffer, bufferSize, &bytesRead, portMAX_DELAY);  // Đọc dữ liệu từ I2S
+  
+  // Lưu dữ liệu vào thẻ SD
+  audioFile.write((byte*)buffer, bytesRead);
+  audioFile.flush();                    // Xác thực dữ liệu đã ghi
+}
+
+// Ghi tiêu đề file WAV
+void writeWavHeader(File file, int sampleRate) {
+  file.write("RIFF", 4);
+  file.write((int32_t)(36 + sampleRate * sizeof(int16_t)), 4);
+  file.write("WAVE", 4);
+  file.write("fmt ", 4);
+  file.write((int32_t)16, 4);           // Kích thước khối "fmt"
+  file.write((int16_t)1, 2);            // Định dạng PCM
+  file.write((int16_t)1, 2);            // Số kênh: mono (1)
+  file.write((int32_t)sampleRate, 4);   // Tần số lấy mẫu
+  file.write((int32_t)(sampleRate * sizeof(int16_t)), 4);
+  file.write((int16_t)2, 2);            // Byte align (2 bytes)
+  file.write((int16_t)16, 2);           // Bit depth (16 bits)
+  file.write("data", 4);
+  file.write((int32_t)(sampleRate * sizeof(int16_t)), 4); // Dữ liệu âm thanh
+}
+
+void handleRoot() {
+  server.send(200, "text/html", "<h1>ESP32 Hydrophone Server</h1><p>Đang ghi tín hiệu từ hydrophone...</p>");
+}
