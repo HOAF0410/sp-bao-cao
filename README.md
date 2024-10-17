@@ -19,3 +19,10 @@ Nguyên lý hoạt động cơ bản:
   + tín hiệu được đưa vào thẻ sd để lưu trữ ( dạng .wav )
   + truy cập vào IP của esp32 ( 198.162.4.1) sẽ hiển thị danh sách các file được ghi
   + ấn vào file để tải đoạn ghi về thiết bị
+# XỬ LÝ NHIỄU TÍN HIỆU ĐẢM BẢO ÂM THANH CHÂN THỰC TỪ MÔI TRƯỜNG
+  + Dùng Max4466 để khuyếch đại từ eps32 đảm bảo tín hiệu không quá bé ( lưu ý chỉnh chiết áp cho phù hợp ) 
+  + Điều chỉnh điện áp đầu vào  : ADC của ESP32 hoạt động với điện áp đầu vào từ 0 đến 3.3V, 
+  cần đảm bảo rằng tín hiệu từ hydrophone được điều chỉnh trong khoảng này. Bộ khuếch đại có thể thêm điện áp "offset" để tín hiệu luôn nằm trong giới hạn này.
+  + giới hạn tần số : giới hạn lại phạm vi cần thu âm để đảm bảo hiệu quả thu 
+  + Tăng tần số lấy mẫu ít nhất trên 44,1 kHz
+  + thêm một tụ lọc nhiễu dòng ở giữa chân 3,3 và 0 V ( cỡ 100 microF ), tách riêng nguồn và GND độc lập tránh nhiễu do nguồn
