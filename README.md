@@ -1,10 +1,12 @@
 # sp-bao-cao
-các thành phần trong mạch: 
+Các thành phần trong mạch: 
 + esp32 devkit v1
 + max4466 ( bỏ mic tạo dây kết nối với hydrophone )
 + sd card
 + button
-+ hydrophone 
++ hydrophone
+
+
 Nguyên lý hoạt động cơ bản:
   + đầu tiên nạp code cho mạch và đảm bảo kết nối đúng
   + ban đầu mạch ở trạng thái chờ
